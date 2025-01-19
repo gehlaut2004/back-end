@@ -5,7 +5,10 @@ const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
   creditBalance: { type: Number, default: 5 },
+  otp: { type: String }, // Field to store the OTP
+  otpExpiresAt: { type: Date }, // Field to store the expiration time of the OTP
 });
+
 const userModel = mongoose.models.user || mongoose.model("user", userSchema);
 
 export default userModel;

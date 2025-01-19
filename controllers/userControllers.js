@@ -3,6 +3,8 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import razorpay from "razorpay";
 import transactionModel from "../models/transactionModel.js";
+import crypto from "crypto";
+import nodemailer from "nodemailer";
 
 // Register User
 const registerUser = async (req, res) => {
@@ -163,9 +165,11 @@ const paymentRazorpay = async (req, res) => {
     res.json({ success: true, order });
   } catch (error) {
     console.log(error);
-    res.status(500).json({ success: false, message: error.message }); // error
+    res.status(500).json({ success: false, message: error.message });
   }
 };
+
+// Verify Razorpay Payment
 const verifyRazorpay = async (req, res) => {
   try {
     const { razorpay_order_id } = req.body;
@@ -175,7 +179,10 @@ const verifyRazorpay = async (req, res) => {
         order_info.receipt
       );
       if (transactionData.payment) {
-        return res.json({ success: false, message: "payment failed" });
+        return res.json({
+          success: false,
+          message: "Payment already processed",
+        });
       }
       const userData = await userModel.findById(transactionData.userId);
       const creditBalance = userData.creditBalance + transactionData.credits;
@@ -192,10 +199,100 @@ const verifyRazorpay = async (req, res) => {
     res.json({ success: true, message: error.message });
   }
 };
+const generateAndSendOTP = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Email is required" });
+    }
+
+    const user = await userModel.findOne({ email });
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString(); // Generate 6-digit OTP
+    const otpExpiresAt = Date.now() + 10 * 60 * 1000; // OTP valid for 10 minutes
+
+    user.otp = otp;
+    user.otpExpiresAt = otpExpiresAt;
+    await user.save();
+
+    // Configure Nodemailer and send OTP
+    const transporter = nodemailer.createTransport({
+      service: "Gmail",
+      auth: {
+        user: process.env.MY_EMAIL,
+        pass: process.env.MY_PASSWORD,
+      },
+    });
+
+    await transporter.sendMail({
+      from: process.env.MY_EMAIL,
+      to: email,
+      subject: "Password Reset OTP",
+      text: `Your OTP for password reset is ${otp}. It will expire in 10 minutes.`,
+    });
+
+    res.status(200).json({ success: true, message: "OTP sent to your email" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Verify OTP and Reset Password
+const verifyOTPAndResetPassword = async (req, res) => {
+  try {
+    const { email, otp, newPassword } = req.body;
+
+    if (!email || !otp || !newPassword) {
+      return res
+        .status(400)
+        .json({ success: false, message: "All fields are required" });
+    }
+
+    const user = await userModel.findOne({ email });
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    if (user.otp !== otp || Date.now() > user.otpExpiresAt) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid or expired OTP" });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+    user.password = hashedPassword;
+    user.otp = undefined; // Clear OTP after successful reset
+    user.otpExpiresAt = undefined;
+    await user.save();
+
+    res
+      .status(200)
+      .json({ success: true, message: "Password reset successful" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "Something went wrong" });
+  }
+};
+
 export {
   registerUser,
   loginUser,
   userCredits,
   paymentRazorpay,
   verifyRazorpay,
+  generateAndSendOTP,
+  verifyOTPAndResetPassword,
 };
